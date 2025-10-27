@@ -1,50 +1,83 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet';
 import { motion } from 'framer-motion';
 import { useAuth } from '@/contexts/AuthContext';
-import { storage, db } from '@/lib/firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc, getDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
-import { updateProfile } from 'firebase/auth';
 import { useToast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Gift } from 'lucide-react';
+import { Gift, User, Lock, Mail } from 'lucide-react';
+import { doc, updateDoc, getDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 const Profile = () => {
-  const { currentUser, userRole, roleExpiresAt } = useAuth();
+  const { currentUser, userRole, roleExpiresAt, updateUserProfileAndPhoto, loading: authLoading } = useAuth();
   const [newPhoto, setNewPhoto] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [bonusCode, setBonusCode] = useState('');
   const [isRedeeming, setIsRedeeming] = useState(false);
   const { toast } = useToast();
 
-  const handlePhotoChange = (e) => {
-    if (e.target.files[0]) {
-      setNewPhoto(e.target.files[0]);
+  const [profileData, setProfileData] = useState({
+    displayName: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+  });
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+
+  useEffect(() => {
+    if (currentUser) {
+      setProfileData({
+        displayName: currentUser.displayName || '',
+        email: currentUser.email || '',
+        password: '',
+        confirmPassword: '',
+      });
+    }
+  }, [currentUser]);
+
+  const handleProfileDataChange = (e) => {
+    const { name, value } = e.target;
+    setProfileData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleProfileUpdate = async () => {
+    if (profileData.password && profileData.password !== profileData.confirmPassword) {
+      toast({ title: 'Erro', description: 'As senhas não coincidem.', variant: 'destructive' });
+      return;
+    }
+    if (profileData.password && profileData.password.length < 6) {
+      toast({ title: 'Erro', description: 'A nova senha deve ter pelo menos 6 caracteres.', variant: 'destructive' });
+      return;
+    }
+
+    setIsUpdatingProfile(true);
+    try {
+      const updates = {
+        displayName: profileData.displayName,
+        email: profileData.email,
+      };
+      if (profileData.password) {
+        updates.password = profileData.password;
+      }
+      
+      await updateUserProfileAndPhoto(updates, newPhoto);
+
+      toast({ title: 'Sucesso!', description: 'Seu perfil foi atualizado.' });
+      setNewPhoto(null);
+      setProfileData(prev => ({ ...prev, password: '', confirmPassword: '' }));
+
+    } catch (error) {
+      toast({ title: 'Erro ao atualizar perfil', description: error.message, variant: 'destructive' });
+    } finally {
+      setIsUpdatingProfile(false);
     }
   };
 
-  const handlePhotoUpload = async () => {
-    if (!newPhoto) return;
-    setUploading(true);
-    const filePath = `profile-pics/${currentUser.uid}/${newPhoto.name}`;
-    const storageRef = ref(storage, filePath);
-    try {
-      const snapshot = await uploadBytes(storageRef, newPhoto);
-      const photoURL = await getDownloadURL(snapshot.ref);
-
-      await updateProfile(currentUser, { photoURL });
-      await updateDoc(doc(db, 'users', currentUser.uid), { photoURL });
-
-      toast({ title: 'Foto de perfil atualizada!' });
-      setNewPhoto(null);
-    } catch (error) {
-      toast({ title: 'Erro ao enviar foto', description: error.message, variant: 'destructive' });
-    } finally {
-      setUploading(false);
+  const handlePhotoChange = (e) => {
+    if (e.target.files[0]) {
+      setNewPhoto(e.target.files[0]);
     }
   };
 
@@ -67,11 +100,15 @@ const Profile = () => {
             throw new Error("Este código já atingiu o limite de usos.");
         }
 
-        const newExpiryDate = new Date();
+        const userDocRef = doc(db, "users", currentUser.uid);
+        const userDoc = await getDoc(userDocRef);
+        const currentRoleExpiresAt = userDoc.data()?.roleExpiresAt?.toDate() || new Date();
+        
+        const newExpiryDate = new Date(Math.max(new Date(), currentRoleExpiresAt));
         newExpiryDate.setDate(newExpiryDate.getDate() + codeData.durationDays);
 
         const batch = writeBatch(db);
-        batch.update(doc(db, "users", currentUser.uid), {
+        batch.update(userDocRef, {
             role: codeData.role,
             roleExpiresAt: newExpiryDate
         });
@@ -97,11 +134,14 @@ const Profile = () => {
       <Helmet>
         <title>Meu Perfil - EPROJECTS</title>
       </Helmet>
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col md:flex-row items-center gap-8 mb-12">
           <div className="relative">
-            <img alt="Foto de Perfil" class="w-32 h-32 rounded-full object-cover border-4 border-orange-500" src="https://images.unsplash.com/photo-1625708974337-fb8fe9af5711" />
-            {newPhoto && <img src={URL.createObjectURL(newPhoto)} alt="nova preview" className="w-32 h-32 rounded-full object-cover absolute top-0 left-0" />}
+            <img 
+              alt="Foto de Perfil" 
+              className="w-32 h-32 rounded-full object-cover border-4 border-orange-500" 
+              src={newPhoto ? URL.createObjectURL(newPhoto) : currentUser?.photoURL || `https://ui-avatars.com/api/?name=${currentUser?.displayName || 'U'}&background=ff6a00&color=000`} 
+            />
           </div>
           <div>
             <h1 className="text-4xl font-bold text-white">{currentUser?.displayName || 'Usuário'}</h1>
@@ -110,14 +150,36 @@ const Profile = () => {
           </div>
         </motion.div>
 
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="glass-card p-6 rounded-lg">
-                <h2 className="text-2xl font-semibold text-white mb-4">Atualizar Foto</h2>
-                <Label htmlFor="photo-upload" className="text-gray-300">Escolha uma nova imagem de perfil</Label>
-                <Input id="photo-upload" type="file" accept="image/*" onChange={handlePhotoChange} className="bg-white/5 border-white/10 text-white mt-2 mb-4 file:text-orange-500"/>
-                <Button onClick={handlePhotoUpload} disabled={!newPhoto || uploading} className="w-full bg-orange-500 hover:bg-orange-600 text-black">
-                    {uploading ? 'Enviando...' : 'Salvar Nova Foto'}
-                </Button>
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="glass-card p-6 rounded-lg lg:col-span-2">
+                <h2 className="text-2xl font-semibold text-white mb-6">Editar Perfil</h2>
+                <div className="space-y-6">
+                    <div className="space-y-2">
+                        <Label htmlFor="displayName" className="text-gray-300 flex items-center gap-2"><User size={16}/> Nome de Exibição</Label>
+                        <Input id="displayName" name="displayName" value={profileData.displayName} onChange={handleProfileDataChange} className="bg-white/5 border-white/10 text-white"/>
+                    </div>
+                    <div className="space-y-2">
+                        <Label htmlFor="email" className="text-gray-300 flex items-center gap-2"><Mail size={16}/> Email</Label>
+                        <Input id="email" name="email" type="email" value={profileData.email} onChange={handleProfileDataChange} className="bg-white/5 border-white/10 text-white"/>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                            <Label htmlFor="password" className="text-gray-300 flex items-center gap-2"><Lock size={16}/> Nova Senha</Label>
+                            <Input id="password" name="password" type="password" value={profileData.password} onChange={handleProfileDataChange} placeholder="Deixe em branco para não alterar" className="bg-white/5 border-white/10 text-white"/>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="confirmPassword" className="text-gray-300 flex items-center gap-2"><Lock size={16}/> Confirmar Nova Senha</Label>
+                            <Input id="confirmPassword" name="confirmPassword" type="password" value={profileData.confirmPassword} onChange={handleProfileDataChange} className="bg-white/5 border-white/10 text-white"/>
+                        </div>
+                    </div>
+                     <div className="space-y-2">
+                        <Label htmlFor="photo-upload" className="text-gray-300">Alterar Foto de Perfil</Label>
+                        <Input id="photo-upload" type="file" accept="image/*" onChange={handlePhotoChange} className="bg-white/5 border-white/10 text-white file:text-orange-500"/>
+                    </div>
+                    <Button onClick={handleProfileUpdate} disabled={isUpdatingProfile || authLoading} className="w-full bg-orange-500 hover:bg-orange-600 text-black">
+                        {isUpdatingProfile ? 'Salvando...' : 'Salvar Alterações'}
+                    </Button>
+                </div>
             </div>
             
             <div className="glass-card p-6 rounded-lg">
