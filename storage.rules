@@ -1,0 +1,53 @@
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // =================================
+    // Funções de Apoio
+    // =================================
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function getUserRole(userId) {
+      return get(/databases/(default)/documents/users/$(userId)).data.role;
+    }
+
+    function isAdmin() {
+      return isAuth() && getUserRole(request.auth.uid) == 'ADMIN';
+    }
+
+    function canAccessCourses() {
+      let role = getUserRole(request.auth.uid);
+      return isAuth() && (role == 'E-MASTER' || role == 'ADMIN');
+    }
+
+    // =================================
+    // Regras dos Arquivos
+    // =================================
+    
+    // Arquivos de Orçamento: budgets/{userId}/{fileName}
+    match /budgets/{userId}/{allPaths=**} {
+      allow read, write: if isAuth() && request.auth.uid == userId;
+    }
+    
+    // Fotos de Perfil: profile_pictures/{userId}/{fileName}
+    match /profile_pictures/{userId}/{allPaths=**} {
+      allow read, write: if isAuth() && request.auth.uid == userId;
+    }
+
+    // Arquivos de Cursos: courses/{courseId}/{...}/{fileName}
+    match /courses/{courseId}/{allPaths=**} {
+      allow read: if canAccessCourses();
+      allow write: if isAdmin();
+    }
+
+    // Regra de fallback para ADMIN ter acesso total
+    // (deve ser usada com cuidado, mas é útil para manutenção)
+    match /{allPaths=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
